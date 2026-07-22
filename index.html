@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SakeBooks — Business Books, Made Plain</title>
+<link id="favicon" rel="icon" type="image/svg+xml" href="">
+<script>
+  // Bese Saka (bunch of cola nuts) — Adinkra symbol for abundance, affluence, and unity through numbers.
+  // Used as SakeBooks' mark throughout the app and on printed documents.
+  window.BESE_SAKA_SVG = '<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">'
+    + '<path d="M20 15 Q32 4 44 15" stroke="#C9971E" stroke-width="3.2" fill="none" stroke-linecap="round"/>'
+    + '<circle cx="22" cy="30" r="13.5" fill="#C9971E"/>'
+    + '<circle cx="42" cy="30" r="13.5" fill="#C9971E" opacity="0.82"/>'
+    + '<circle cx="32" cy="43" r="13.5" fill="#C9971E" opacity="0.64"/>'
+    + '</svg>';
+  document.getElementById('favicon').href = 'data:image/svg+xml,' + encodeURIComponent(window.BESE_SAKA_SVG.replace('<svg ', '<svg width="64" height="64" '));
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="authGate">
+  <div class="auth-card">
+    <div class="mark"><span class="mark-icon"></span>SakeBooks</div>
+    <div class="tag" id="authTagline">Sign in to open your books</div>
+    <div style="display:flex; gap:6px; margin:14px 0;">
+      <button class="btn btn-ghost" id="gate_tab_login" style="flex:1; justify-content:center;">Log in</button>
+      <button class="btn btn-ghost" id="gate_tab_signup" style="flex:1; justify-content:center;">Sign up</button>
+    </div>
+    <div class="field" style="text-align:left; display:none;" id="gate_name_field"><label>Full name</label><input id="gate_name" placeholder="e.g. Patrick Mensah"></div>
+    <div class="field" style="text-align:left;"><label>Email</label><input id="gate_email" type="email" placeholder="you@business.com"></div>
+    <div class="field" style="text-align:left;"><label>Password</label><input id="gate_password" type="password" placeholder="At least 6 characters"></div>
+    <div id="gate_error" style="color:#c0392b; font-size:13px; margin-bottom:8px; display:none;"></div>
+    <button class="btn btn-primary" id="gate_continue" style="width:100%; justify-content:center;">Log in</button>
+    <div class="auth-note" id="gate_confirm_note" style="display:none;">Check your email to confirm your account, then log in.</div>
+  </div>
+</div>
+
+<div id="app" style="display:none;">
+  <div class="sidebar">
+    <div class="brand">
+      <div class="mark"><span class="mark-icon"></span>SakeBooks</div>
+      <div class="tag" id="sidebarTagline">Business books, made plain</div>
+      <div style="margin-top:12px; display:flex; gap:6px; align-items:center;">
+        <select id="bizSwitcher" style="flex:1; background:rgba(250,246,236,0.08); color:#EDEFF5; border:1px solid rgba(250,246,236,0.18); border-radius:6px; padding:6px 8px; font-size:12px;"></select>
+        <button id="addBizBtn" title="Add another business" style="all:unset; cursor:pointer; background:rgba(201,151,30,0.18); color:var(--gold); border-radius:6px; padding:6px 9px; font-size:14px; line-height:1;">+</button>
+      </div>
+    </div>
+    <div class="nav" id="navList">
+      <div class="grp-label">Overview</div>
+      <button data-route="dashboard">Dashboard</button>
+      <div class="grp-label">Money in / out</div>
+      <button data-route="sales">Sales &amp; Invoicing</button>
+      <button data-route="expenses">Expenses</button>
+      <button data-route="inventory">Inventory</button>
+      <button data-route="bankimport">Bank &amp; MoMo Import</button>
+      <div class="grp-label">Customers &amp; Leads</div>
+      <button data-route="customers">Customers</button>
+      <button data-route="crm">CRM / Pipeline</button>
+      <div class="grp-label">Team</div>
+      <button data-route="payroll">Payroll</button>
+      <div class="grp-label">Books</div>
+      <button data-route="reports">Reports</button>
+      <button data-route="budgeting">Budgeting</button>
+      <button data-route="assets">Assets, Loans &amp; Equity</button>
+      <button data-route="worth">Business Worth</button>
+      <div class="grp-label">Setup</div>
+      <button data-route="settings">Business Settings</button>
+    </div>
+    <div class="sidebar-foot" id="userFoot" style="display:flex; justify-content:space-between; align-items:center;"></div>
+    <div class="sidebar-foot" id="netStatus" style="display:flex; align-items:center; gap:6px;"></div>
+    <div class="sidebar-foot" id="bizFoot">Peanut Concept Enterprise</div>
+  </div>
+
+  <div class="main" id="main"></div>
+</div>
+
+<!-- AI Assistant -->
+<button class="ai-fab" id="aiFab"><span class="dot"></span> Ask your books</button>
+<div class="ai-panel" id="aiPanel">
+  <div class="ai-head">
+    <div>
+      <div class="t">Besa, your book-keeper</div>
+      <div class="st">Answers using your live figures</div>
+    </div>
+    <button class="icon-btn" style="color:#fff" id="aiClose">✕</button>
+  </div>
+  <div class="ai-body" id="aiBody"></div>
+  <div class="ai-suggest" id="aiSuggest"></div>
+  <div class="ai-input">
+    <input id="aiInput" placeholder="e.g. Which customers owe me money?">
+    <button id="aiSend">Ask</button>
+  </div>
+</div>
+
+<!-- Generic modal -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal" id="modalBody"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
