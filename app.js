@@ -232,6 +232,59 @@ async function pushCurrentBusinessToCloud(){
     updated_at: new Date().toISOString()
   });
   if(error) console.warn('Cloud sync failed', error);
+  mirrorCollectionsToCloud(session.user.id, biz.data);
+}
+
+/* Mirrors the key collections (customers, invoices, expenses, assets,
+   income transactions) into their own normalized tables, so they can be
+   queried directly with SQL instead of always loading the whole
+   business's JSON blob. The JSON blob in "businesses" stays the source
+   of truth the app actually reads from; these tables are a synced copy.
+   Simple strategy: replace each business's rows in each table with
+   whatever is currently in state — safe for a solo bookkeeper's data
+   size, and avoids tracking per-item dirty state. */
+async function mirrorCollectionsToCloud(userId, data){
+  const bizId = meta.currentId;
+
+  const tables = [
+    { table:'customers', rows: (data.customers||[]).map(c => ({
+        id:c.id, business_id:bizId, user_id:userId, name:c.name, phone:c.phone, email:c.email, updated_at:new Date().toISOString() })) },
+    { table:'invoices', rows: (data.invoices||[]).map(i => ({
+        id:i.id, business_id:bizId, user_id:userId, number:i.number, customer_id:i.customerId,
+        date:i.date, due_date:i.dueDate||null, status:i.status||null, items:i.items||[],
+        total: invoiceTotal(i).total, updated_at:new Date().toISOString() })) },
+    { table:'expenses', rows: (data.expenses||[]).map(e => ({
+        id:e.id, business_id:bizId, user_id:userId, date:e.date, amount:e.amount, category:e.category,
+        method:e.method, vendor:e.vendor, recurring:!!e.recurring, updated_at:new Date().toISOString() })) },
+    { table:'assets', rows: (data.assets||[]).map(a => ({
+        id:a.id, business_id:bizId, user_id:userId, name:a.name, category:a.category,
+        value:a.value, purchase_date:a.purchaseDate||null, updated_at:new Date().toISOString() })) },
+    { table:'transactions', rows: (data.otherIncome||[]).map(t => ({
+        id:t.id, business_id:bizId, user_id:userId, date:t.date, amount:t.amount,
+        description:t.description, method:t.method, updated_at:new Date().toISOString() })) }
+  ];
+
+  for(const { table, rows } of tables){
+    // Clear this business's existing rows in the table, then re-insert current ones.
+    const { error: delErr } = await supabaseClient.from(table).delete().eq('business_id', bizId);
+    if(delErr){ console.warn(`Mirror clear failed for ${table}`, delErr); continue; }
+    if(rows.length === 0) continue;
+    const { error: insErr } = await supabaseClient.from(table).insert(rows);
+    if(insErr) console.warn(`Mirror insert failed for ${table}`, insErr);
+  }
+}
+
+/* Saves a record (not a mirror — an append-only log) each time a report
+   is exported, so you keep a history of what was generated and when. */
+async function saveReportSnapshot(type, summary){
+  if(!supabaseClient || !meta.currentUser) return;
+  const { data:{ session } } = await supabaseClient.auth.getSession();
+  if(!session) return;
+  const { error } = await supabaseClient.from('reports').insert({
+    id: uid('rep_'), business_id: meta.currentId, user_id: session.user.id,
+    type, summary, generated_at: new Date().toISOString()
+  });
+  if(error) console.warn('Report snapshot failed', error);
 }
 async function syncBusinessesFromCloud(){
   if(!supabaseClient) return;
@@ -1776,46 +1829,4 @@ function renderSettings(){
       </div>
       <div class="field"><label>Address</label><input id="s_addr" value="${s.address||''}"></div>
       <div class="field-row">
-        <div class="field"><label>Currency</label>
-          <select id="s_curr">${CURRENCIES.map(c=>`<option value="${c.code}" ${s.currency===c.code?'selected':''}>${c.code} — ${c.name.split(' — ')[1]}</option>`).join('')}</select>
-        </div>
-        <div class="field"><label>VAT scheme</label>
-          <select id="s_scheme">
-            <option value="standard" ${s.taxScheme==='standard'?'selected':''}>Standard (15% VAT + 2.5% NHIL + 2.5% GETFund = 20%)</option>
-            <option value="flat" ${s.taxScheme==='flat'?'selected':''}>VAT Flat Rate Scheme (3%)</option>
-            <option value="none" ${s.taxScheme==='none'?'selected':''}>Not VAT registered</option>
-          </select>
-        </div>
-      </div>
-      <button class="btn btn-primary" data-action="save-settings">Save settings</button>
-      <p style="color:var(--slate); font-size:12px; margin-top:14px;">Ghana's effective VAT rate is 20% since the Jan 2026 reforms (15% VAT + 2.5% NHIL + 2.5% GETFund, all on the same base; the old 1% COVID levy was scrapped). This is a default — check GRA for your specific registration.</p>
-    </div>
-
-    <div class="card" style="max-width:640px; margin-top:18px;">
-      <h3>Expense categories</h3>
-      <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
-        ${state.expenseCategories.map((c,i)=>`
-          <span style="background:var(--paper-2); border:1px solid var(--rule); border-radius:16px; padding:5px 8px 5px 12px; font-size:12.5px; display:inline-flex; align-items:center; gap:6px;">
-            ${c} <button data-action="remove-category" data-idx="${i}" style="all:unset; cursor:pointer; color:var(--rust); font-weight:700; padding:0 4px;">✕</button>
-          </span>`).join('')}
-      </div>
-      <div style="display:flex; gap:8px;">
-        <input id="newCatInput" placeholder="e.g. Equipment lease" style="flex:1;">
-        <button class="btn btn-ghost btn-sm" data-action="add-category">+ Add category</button>
-      </div>
-    </div>
-
-    <div class="card" style="max-width:640px; margin-top:18px;">
-      <h3>Invoice branding</h3>
-      <div class="field">
-        <label>Business logo</label>
-        <div style="display:flex; align-items:center; gap:14px;">
-          ${s.logoDataUrl ? `<img src="${s.logoDataUrl}" style="height:52px; max-width:140px; object-fit:contain; border:1px solid var(--rule); border-radius:6px; padding:4px; background:#fff;">` : `<div style="height:52px; width:90px; border:1px dashed var(--rule); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--slate);">No logo</div>`}
-          <input type="file" id="logoUpload" accept="image/*" style="flex:1;">
-          ${s.logoDataUrl ? `<button class="btn btn-ghost btn-sm" data-action="remove-logo">Remove</button>` : ''}
-        </div>
-      </div>
-      <label style="margin-top:16px;">Invoice template</label>
-      <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-top:6px;">
-        ${INVOICE_TEMPLATES.map(t=>`
-          <button data-action="pick-template" data-tpl="${t.key}" style="all:unset; cursor:pointer; border:2px solid ${s.invoice
+        <div class="field"><label>Currency</label
